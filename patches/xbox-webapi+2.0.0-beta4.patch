@@ -1,0 +1,69 @@
+diff --git a/node_modules/xbox-webapi/dist/lib/http.js b/node_modules/xbox-webapi/dist/lib/http.js
+index 330bd3f..96ebfc6 100644
+--- a/node_modules/xbox-webapi/dist/lib/http.js
++++ b/node_modules/xbox-webapi/dist/lib/http.js
+@@ -7,6 +7,29 @@ exports.HttpResponse = void 0;
+ exports.applyPagination = applyPagination;
+ const https_1 = __importDefault(require("https"));
+ const url_1 = require("url");
++function sanitizeHeaders(headers = {}) {
++    const sanitized = { ...headers };
++    for (const key of Object.keys(sanitized)) {
++        const lower = key.toLowerCase();
++        if (lower === 'authorization' ||
++            lower === 'cookie' ||
++            lower === 'set-cookie' ||
++            lower.includes('token') ||
++            lower.includes('auth')) {
++            sanitized[key] = '[redacted]';
++        }
++    }
++    return sanitized;
++}
++function logJsonParseFailure(url, statusCode, error, responseSize) {
++    const errorType = error instanceof Error ? error.name : typeof error;
++    console.error('[xbox-webapi][HTTP] JSON parse failed', {
++        url,
++        status: statusCode,
++        errorType,
++        responseSize,
++    });
++}
+ class Http {
+     getRequest(host, path, headers, method = 'GET') {
+         return new Promise((resolve, reject) => {
+@@ -63,19 +86,31 @@ class Http {
+                 responseData += data;
+             });
+             res.on('close', () => {
++                const url = `${options.hostname || ''}${options.path || ''}`;
+                 if (res.statusCode == 200 || res.statusCode == 204) {
+                     if (responseData.toString() === '') {
+                         resolve(new HttpResponse({}, res.headers, options));
+                     }
+                     else {
+-                        resolve(new HttpResponse(JSON.parse(responseData.toString()), res.headers, options));
++                        try {
++                            resolve(new HttpResponse(JSON.parse(responseData.toString()), res.headers, options));
++                        }
++                        catch (error) {
++                            logJsonParseFailure(url, res.statusCode, error, Buffer.byteLength(responseData.toString(), 'utf8'));
++                            reject(new Error('Invalid JSON response from ' + url + '. Details: ' + JSON.stringify({
++                                statuscode: res.statusCode,
++                                errorType: error instanceof Error ? error.name : typeof error,
++                                responseSize: Buffer.byteLength(responseData.toString(), 'utf8'),
++                                message: 'JSON.parse failed for ' + url
++                            }, null, 2)));
++                        }
+                     }
+                 }
+                 else {
+                     reject(new Error('Error fetching ' + options.hostname + options.path + '. Details: ' + JSON.stringify({
+                         statuscode: res.statusCode,
+-                        headers: res.headers,
+-                        body: responseData.toString(),
++                        headers: sanitizeHeaders(res.headers),
++                        bodySize: Buffer.byteLength(responseData.toString(), 'utf8'),
+                         message: 'Error fetching ' + options.hostname + options.path
+                     }, null, 2)));
+                 }

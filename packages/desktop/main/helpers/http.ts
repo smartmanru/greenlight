@@ -1,5 +1,6 @@
 import https from 'https'
 import Application from '../application'
+import { safeParseJsonResponse } from './safeJson'
 
 export default class Http {
 
@@ -28,12 +29,17 @@ export default class Http {
                 response.on('end', () => {
                     if(response.statusCode >= 200 && response.statusCode <= 299){
                         this._application.log('HTTP', 'get('+url+', '+method+') resolve:', response.statusCode)
-                        let returnData = responseData
-                        try {
-                            returnData = JSON.parse(responseData)
-                        } catch(error){
-                            // Data is not JSON..
+                        const parsed = safeParseJsonResponse(responseData, {
+                            url: host + url,
+                            status: response.statusCode,
+                        }, (message, details) => {
+                            this._application.log('HTTP', 'get('+url+') '+message+':', details)
+                        })
+                        if(!parsed.ok){
+                            reject(parsed.error)
+                            return
                         }
+                        const returnData = parsed.value
 
                         if(response.statusCode === 204){
                             // We have to retry..
@@ -53,7 +59,7 @@ export default class Http {
                         reject({
                             url: url,
                             status: response.statusCode,
-                            body: responseData,
+                            bodySize: Buffer.byteLength(responseData, 'utf8'),
                         })
                     }
                 })
@@ -88,20 +94,24 @@ export default class Http {
                     if(response.statusCode >= 200 && response.statusCode <= 299){
                         this._application.log('HTTP', 'post('+url+') resolve:', response.statusCode, responseData.substring(0, 100))
 
-                        let returnData = responseData
-                        try {
-                            returnData = JSON.parse(responseData)
-                        } catch(error){
-                            // Data is not JSON..
+                        const parsed = safeParseJsonResponse(responseData, {
+                            url: host + url,
+                            status: response.statusCode,
+                        }, (message, details) => {
+                            this._application.log('HTTP', 'post('+url+') '+message+':', details)
+                        })
+                        if(!parsed.ok){
+                            reject(parsed.error)
+                            return
                         }
                         
-                        resolve(returnData)
+                        resolve(parsed.value)
                     } else {
                         this._application.log('HTTP', 'post('+url+') reject:', response.statusCode)
                         reject({
                             url: url,
                             status: response.statusCode,
-                            body: responseData,
+                            bodySize: Buffer.byteLength(responseData, 'utf8'),
                         })
                     }
                 })

@@ -1,6 +1,33 @@
 import { IncomingHttpHeaders } from 'http'
 import https from 'https'
 
+function sanitizeHeaders(headers: any = {}) {
+    const sanitized: Record<string, unknown> = { ...headers }
+    for (const key of Object.keys(sanitized)) {
+        const lower = key.toLowerCase()
+        if (
+            lower === 'authorization' ||
+            lower === 'cookie' ||
+            lower === 'set-cookie' ||
+            lower.includes('token') ||
+            lower.includes('auth')
+        ) {
+            sanitized[key] = '[redacted]'
+        }
+    }
+    return sanitized
+}
+
+function logJsonParseFailure(url: string, statusCode: number | undefined, error: unknown, responseSize: number) {
+    const errorType = error instanceof Error ? error.name : typeof error
+    console.error('[HTTP] JSON parse failed', {
+        url,
+        status: statusCode,
+        errorType,
+        responseSize,
+    })
+}
+
 export default class Http {
 
     getRequest(host:string, path:string, headers:any, method = 'GET') {
@@ -77,17 +104,28 @@ export default class Http {
             })
 
             res.on('close', () => {
+                const url = `${options.hostname || ''}${options.path || ''}`
                 if(res.statusCode == 200 || res.statusCode == 204){
                     if(responseData.toString() === ''){
                         resolve(new HttpResponse({}, res.headers, options))
                     } else {
-                        resolve(new HttpResponse(JSON.parse(responseData.toString()), res.headers, options))
+                        try {
+                            resolve(new HttpResponse(JSON.parse(responseData.toString()), res.headers, options))
+                        } catch (error) {
+                            logJsonParseFailure(url, res.statusCode, error, Buffer.byteLength(responseData.toString(), 'utf8'))
+                            reject(new Error('Invalid JSON response from '+url+'. Details: '+ JSON.stringify({
+                                statuscode: res.statusCode,
+                                errorType: error instanceof Error ? error.name : typeof error,
+                                responseSize: Buffer.byteLength(responseData.toString(), 'utf8'),
+                                message: 'JSON.parse failed for '+url
+                            }, null, 2)))
+                        }
                     }
                 } else {
                     reject(new Error('Error fetching '+options.hostname+options.path+'. Details: '+ JSON.stringify({
                         statuscode: res.statusCode,
-                        headers: res.headers,
-                        body: responseData.toString(),
+                        headers: sanitizeHeaders(res.headers),
+                        bodySize: Buffer.byteLength(responseData.toString(), 'utf8'),
                         message: 'Error fetching '+options.hostname+options.path
                     }, null, 2)))
                 }
